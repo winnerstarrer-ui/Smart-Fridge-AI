@@ -12,3 +12,5 @@ NOT yet built: AI scan, recipes, notifications (Stage 2).
 4. Publish rules: npm install -g firebase-tools, firebase login, firebase init (choose existing project; keep firestore.rules and firebase.json), firebase deploy --only firestore:rules
 5. Deploy: npm run build, then firebase deploy --only hosting
 6. Android: open the https URL in Chrome → ⋮ menu → Install app / Add to Home screen.
+
+Stage 2: enhanced inventory, search, shopping, expiry and settings (no AI).
