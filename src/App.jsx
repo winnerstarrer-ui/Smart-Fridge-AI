@@ -6,6 +6,10 @@ import {auth,db} from './firebase';
 const LOCS=['fridge','freezer','pantry'];const ICON={fridge:'🧊',freezer:'❄️',pantry:'🥫'};
 const days=d=>d?Math.ceil((new Date(d+'T00:00:00')-new Date().setHours(0,0,0,0))/864e5):null;
 const badge=d=>{const n=days(d);return n===null?['No date','b-gray']:n<0?['Expired','b-red']:n===0?['Today','b-red']:n<=3?[n+'d left','b-amber']:[n+'d left','b-green']};
+const UNITS=['pcs','kg','g','L','ml','packs','dozen','bottles','cans','boxes'];
+const FR={kg:[.25,.5,.75,1,1.5,2],L:[.25,.5,.75,1,1.5,2],g:[100,250,500,1000],ml:[100,250,500,1000]};
+const step=u=>u==='kg'||u==='L'?.25:1;
+const fmt=q=>{q=Number(q)||0;const w=Math.floor(q),m={.25:'¼',.5:'½',.75:'¾'}[q-w];return m?(w||'')+m:String(+q.toFixed(2))};
 const WHEN={all:()=>true,expired:d=>d!==null&&d<0,today:d=>d===0,tomorrow:d=>d===1,d3:d=>d!==null&&d>=0&&d<=3,d7:d=>d!==null&&d>=0&&d<=7};
 const WLABEL={all:'All dates',expired:'Expired',today:'Today',d3:'≤3 days',d7:'≤7 days'};
 function parse(q){let t=q.toLowerCase().replace(/\?/g,''),when=null,loc=null;
@@ -28,17 +32,18 @@ function Auth(){
 }
 
 function ItemForm({item,defaults,recents,onSave,onCancel}){
-  const[f,setF]=useState(item||{name:'',quantity:1,unit:'pcs',location:'fridge',category:'',expiry:'',expiryType:'printed',opened:false,notes:'',...defaults});
+  const[f,setF]=useState(item||{name:'',quantity:1,unit:'pcs',location:'fridge',category:'',expiry:'',opened:false,notes:'',...defaults});
   const[busy,setB]=useState(false);const s=k=>e=>setF({...f,[k]:e.target.type==='checkbox'?e.target.checked:e.target.value});
   const save=async()=>{if(busy||!f.name.trim())return;setB(true);await onSave({...f,name:f.name.trim(),quantity:Number(f.quantity)||0});setB(false)};
   return <div className="sheet"><div className="card"><h3>{item?'Edit item':'Add item'}</h3>
     {!item&&!!recents.length&&<div className="chips" style={{flexWrap:'wrap'}}>{recents.map(r=><button key={r.name} className="chip" onClick={()=>setF({...f,name:r.name,unit:r.unit,location:r.location,category:r.category||''})}>{r.name}</button>)}</div>}
     <input placeholder="Name (e.g. Milk)" value={f.name} onChange={s('name')}/>
-    <div className="row"><input type="number" min="0" value={f.quantity} onChange={s('quantity')}/><input value={f.unit} onChange={s('unit')} placeholder="unit"/></div>
+    <div className="row"><input type="number" min="0" step="any" inputMode="decimal" value={f.quantity} onChange={s('quantity')} placeholder="Quantity"/>
+      <select value={f.unit} onChange={s('unit')}>{(UNITS.includes(f.unit)?UNITS:[...UNITS,f.unit]).map(u=><option key={u}>{u}</option>)}</select></div>
+    {FR[f.unit]&&<div className="chips" style={{flexWrap:'wrap'}}>{FR[f.unit].map(v=><button key={v} className={'chip '+(Number(f.quantity)===v?'on':'')} onClick={()=>setF({...f,quantity:v})}>{fmt(v)} {f.unit}</button>)}</div>}
     <select value={f.location} onChange={s('location')}>{LOCS.map(l=><option key={l} value={l}>{ICON[l]} {l}</option>)}</select>
     <input placeholder="Category (dairy, meat, vegetable…)" value={f.category||''} onChange={s('category')}/>
     <label>Expiry date (blank = unknown)</label><input type="date" value={f.expiry||''} onChange={s('expiry')}/>
-    <select value={f.expiryType||'printed'} onChange={s('expiryType')}><option value="printed">Printed on package</option><option value="bestbefore">My best-before date</option><option value="reminder">Estimated reminder</option></select>
     <label><input type="checkbox" checked={!!f.opened} onChange={s('opened')}/> Opened</label>
     <input placeholder="Notes" value={f.notes||''} onChange={s('notes')}/>
     <button className="btn" disabled={busy} onClick={save}>Save</button><button className="link" onClick={onCancel}>Cancel</button></div></div>;
@@ -66,7 +71,7 @@ export default function App(){
   const addShop=(name,quantity=1,unit='pcs')=>addDoc(collection(db,base+'shoppingList'),{name,quantity,unit,done:false,...stamp});
   const strip=({id,createdAt,updatedAt,...r})=>r;
   const consume=async i=>{const data=strip(i);await del(i.id);setToast({msg:`${i.name} consumed`,undo:()=>addItem(data),shop:i.name})};
-  const adjust=async(i,n)=>{const q=i.quantity+n;if(q<=0)return consume(i);await upd(i.id,{quantity:q});if(n<0)setToast({msg:`${i.name}: ${q} ${i.unit} left`,undo:()=>upd(i.id,{quantity:i.quantity})})};
+  const adjust=async(i,n)=>{n*=step(i.unit);const q=i.quantity+n;if(q<=0)return consume(i);await upd(i.id,{quantity:q});if(n<0)setToast({msg:`${i.name}: ${fmt(q)} ${i.unit} left`,undo:()=>upd(i.id,{quantity:i.quantity})})};
   const bulk=async()=>{const t=items.filter(i=>sel.has(i.id));const saved=t.map(strip);for(const i of t)await del(i.id);setSel(null);setToast({msg:`${t.length} items consumed`,undo:async()=>{for(const d of saved)await addItem(d)}})};
   const P=parse(q);const L=P.loc||loc,W=P.when||when;
   const cmp={expiry:(a,b)=>(a.expiry||'9999').localeCompare(b.expiry||'9999'),name:(a,b)=>a.name.localeCompare(b.name),recent:(a,b)=>(b.createdAt?.seconds||9e9)-(a.createdAt?.seconds||9e9)}[sort];
@@ -79,13 +84,13 @@ export default function App(){
   const go=(t,w='all')=>{setWhen(w);setLoc('all');setQ('');setTab(t)};
   const Row=({i})=>{const[t,c]=badge(i.expiry);return <div className="item">
     {sel&&<input type="checkbox" style={{width:22}} checked={sel.has(i.id)} onChange={()=>{const n=new Set(sel);n.has(i.id)?n.delete(i.id):n.add(i.id);setSel(n)}}/>}
-    <div className="grow"><b>{i.name}</b><small>{ICON[i.location]} {i.quantity} {i.unit}{i.opened?' · opened':''}{i.expiry?' · '+i.expiry:''}</small></div>
+    <div className="grow"><b>{i.name}</b><small>{ICON[i.location]} {fmt(i.quantity)} {i.unit}{i.opened?' · opened':''}{i.expiry?' · '+i.expiry:''}</small></div>
     <span className={'badge '+c}>{t}</span>
     {!sel&&<><button className="ic" onClick={()=>adjust(i,-1)}>−</button><button className="ic" onClick={()=>adjust(i,1)}>+</button><button className="ic" onClick={()=>setForm(i)}>✏️</button><button className="ic" title="Consumed" onClick={()=>consume(i)}>✅</button></>}</div>};
   const Stat=({n,l,w,cls})=><button className={'stat '+(cls||'')} onClick={()=>go('inventory',w)}><b>{n}</b>{l}</button>;
   const doneItems=shop.filter(s=>s.done);
   const moveDone=async()=>{if(!doneItems.length||!confirm(`Move ${doneItems.length} purchased items to your fridge inventory? You can edit location/expiry afterwards.`))return;
-    for(const s of doneItems){await addItem({name:s.name,category:'',quantity:s.quantity,unit:s.unit,location:'fridge',expiry:'',expiryType:'printed',opened:false,notes:'From shopping list'});await deleteDoc(doc(db,base+'shoppingList',s.id))}};
+    for(const s of doneItems){await addItem({name:s.name,category:'',quantity:s.quantity,unit:s.unit,location:'fridge',expiry:'',opened:false,notes:'From shopping list'});await deleteDoc(doc(db,base+'shoppingList',s.id))}};
   return <div className="app"><main>
     {tab==='home'&&<><h2>Home</h2>
       <div className="stats"><Stat n={items.length} l="Items" w="all"/><Stat n={cnt(d=>d===0)} l="Today" w="today" cls="red"/><Stat n={cnt(WHEN.d3)} l="≤3 days" w="d3" cls="amber"/><Stat n={cnt(d=>d!==null&&d<0)} l="Expired" w="expired" cls="red"/></div>
@@ -102,7 +107,7 @@ export default function App(){
       <button className="chip" onClick={()=>setSel(sel?null:new Set())}>{sel?'Cancel select':'Select'}</button>
       {sel&&<div className="bar"><span className="grow">{sel.size} selected</span><button onClick={()=>setSel(new Set(list.map(i=>i.id)))}>All</button><button disabled={!sel.size} onClick={bulk}>✅ Consume</button></div>}
       {q.trim()&&<p className="empty">{list.length?`Found ${list.length} recorded item${list.length>1?'s':''}.`:'This item is not currently recorded in your inventory. (It may still be in your fridge — the app only knows what you have logged.)'}</p>}
-      {groups.map(g=><div key={g[0].name.toLowerCase()}>{g.length>1&&<div className="grp">{g[0].name} <small>· {g.length} batches · {g.reduce((a,i)=>a+i.quantity,0)} {g[0].unit} total</small></div>}{g.map(i=><Row key={i.id} i={i}/>)}</div>)}
+      {groups.map(g=><div key={g[0].name.toLowerCase()}>{g.length>1&&<div className="grp">{g[0].name} <small>· {g.length} batches · {fmt(g.reduce((a,i)=>a+i.quantity,0))} {g[0].unit} total</small></div>}{g.map(i=><Row key={i.id} i={i}/>)}</div>)}
       {!items.length&&<p className="empty">Your inventory is empty.</p>}</>}
     {tab==='shopping'&&<><h2>Shopping</h2><div className="row"><input placeholder="Add item…" value={sName} onChange={e=>setSName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&sName.trim()){addShop(sName.trim());setSName('')}}}/>
       <button className="btn sm" onClick={()=>{if(!sName.trim())return;addShop(sName.trim());setSName('')}}>Add</button></div>
