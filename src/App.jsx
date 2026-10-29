@@ -10,6 +10,9 @@ const UNITS=['pcs','kg','g','L','ml','packs','dozen','bottles','cans','boxes'];
 const FR={kg:[.25,.5,.75,1,1.5,2],L:[.25,.5,.75,1,1.5,2],g:[100,250,500,1000],ml:[100,250,500,1000]};
 const step=u=>u==='kg'||u==='L'?.25:1;
 const fmt=q=>{q=Number(q)||0;const w=Math.floor(q),m={.25:'¼',.5:'½',.75:'¾'}[q-w];return m?(w||'')+m:String(+q.toFixed(2))};
+const THEMES={light:'🌿 Green',dark:'🌙 Dark',ocean:'🌊 Ocean',sunset:'🌅 Sunset',berry:'🍇 Berry',midnight:'🌌 Midnight'};
+const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const added=i=>i.addedOn||(i.createdAt?.seconds?new Date(i.createdAt.seconds*1000).toISOString().slice(0,10):today());
 const WHEN={all:()=>true,expired:d=>d!==null&&d<0,today:d=>d===0,tomorrow:d=>d===1,d3:d=>d!==null&&d>=0&&d<=3,d7:d=>d!==null&&d>=0&&d<=7};
 const WLABEL={all:'All dates',expired:'Expired',today:'Today',d3:'≤3 days',d7:'≤7 days'};
 function parse(q){let t=q.toLowerCase().replace(/\?/g,''),when=null,loc=null;
@@ -54,8 +57,8 @@ export default function App(){
   const[items,setItems]=useState([]);const[shop,setShop]=useState([]);
   const[q,setQ]=useState('');const[loc,setLoc]=useState('all');const[when,setWhen]=useState('all');const[sort,setSort]=useState('expiry');
   const[form,setForm]=useState(null);const[sName,setSName]=useState('');const[sel,setSel]=useState(null);const[toast,setToast]=useState(null);
-  const[dark,setDark]=useState(()=>{try{return localStorage.getItem('theme')?localStorage.getItem('theme')==='dark':matchMedia('(prefers-color-scheme:dark)').matches}catch{return false}});
-  useEffect(()=>{document.documentElement.dataset.theme=dark?'dark':'light';try{localStorage.setItem('theme',dark?'dark':'light')}catch{}},[dark]);
+  const[theme,setTheme]=useState(()=>{try{const t=localStorage.getItem('theme');return THEMES[t]?t:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}catch{return 'light'}});
+  useEffect(()=>{document.documentElement.dataset.theme=theme;try{localStorage.setItem('theme',theme)}catch{}},[theme]);
   useEffect(()=>onAuthStateChanged(auth,setUser),[]);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),7000);return()=>clearTimeout(t)},[toast]);
   useEffect(()=>{if(!user)return;const b=`users/${user.uid}/`;
@@ -65,7 +68,7 @@ export default function App(){
   if(user===undefined)return <div className="auth">Loading…</div>;
   if(!user)return <Auth/>;
   const base=`users/${user.uid}/`;const stamp={updatedAt:serverTimestamp()};
-  const addItem=d=>addDoc(collection(db,base+'inventory'),{...d,createdAt:serverTimestamp(),...stamp});
+  const addItem=d=>addDoc(collection(db,base+'inventory'),{addedOn:today(),...d,createdAt:serverTimestamp(),...stamp});
   const upd=(id,d)=>updateDoc(doc(db,base+'inventory',id),{...d,...stamp});
   const del=id=>deleteDoc(doc(db,base+'inventory',id));
   const addShop=(name,quantity=1,unit='pcs')=>addDoc(collection(db,base+'shoppingList'),{name,quantity,unit,done:false,...stamp});
@@ -84,7 +87,7 @@ export default function App(){
   const go=(t,w='all')=>{setWhen(w);setLoc('all');setQ('');setTab(t)};
   const Row=({i})=>{const[t,c]=badge(i.expiry);return <div className="item">
     {sel&&<input type="checkbox" style={{width:22}} checked={sel.has(i.id)} onChange={()=>{const n=new Set(sel);n.has(i.id)?n.delete(i.id):n.add(i.id);setSel(n)}}/>}
-    <div className="grow"><b>{i.name}</b><small>{ICON[i.location]} {fmt(i.quantity)} {i.unit}{i.opened?' · opened':''}{i.expiry?' · '+i.expiry:''}</small></div>
+    <div className="grow"><b>{i.name}</b><small>{ICON[i.location]} {fmt(i.quantity)} {i.unit}{i.opened?' · opened':''}{i.expiry?' · exp '+i.expiry:''} · added {added(i)}</small></div>
     <span className={'badge '+c}>{t}</span>
     {!sel&&<><button className="ic" onClick={()=>adjust(i,-1)}>−</button><button className="ic" onClick={()=>adjust(i,1)}>+</button><button className="ic" onClick={()=>setForm(i)}>✏️</button><button className="ic" title="Consumed" onClick={()=>consume(i)}>✅</button></>}</div>};
   const Stat=({n,l,w,cls})=><button className={'stat '+(cls||'')} onClick={()=>go('inventory',w)}><b>{n}</b>{l}</button>;
@@ -118,7 +121,7 @@ export default function App(){
         {s.done&&<button className="ic" title="Move to inventory" onClick={()=>setForm({defaults:{name:s.name,unit:s.unit,quantity:s.quantity},moveShop:s.id})}>📥</button>}
         <button className="ic" onClick={()=>deleteDoc(doc(db,base+'shoppingList',s.id))}>🗑</button></div>)}
       {!!doneItems.length&&<><button className="btn" onClick={moveDone}>📥 Move all purchased ({doneItems.length}) to inventory</button><button className="link" onClick={async()=>{if(confirm('Remove all purchased items from the list?'))for(const s of doneItems)await deleteDoc(doc(db,base+'shoppingList',s.id))}}>Clear purchased</button></>}</>}
-    {tab==='settings'&&<><h2>Settings</h2><div className="card"><p>Signed in as <b>{user.email||'Guest'}</b></p><label><input type="checkbox" checked={dark} onChange={e=>setDark(e.target.checked)}/> Dark mode</label></div>
+    {tab==='settings'&&<><h2>Settings</h2><div className="card"><p>Signed in as <b>{user.email||'Guest'}</b></p><p>Theme</p><div className="chips" style={{flexWrap:'wrap'}}>{Object.entries(THEMES).map(([k,v])=><button key={k} className={'chip '+(theme===k?'on':'')} onClick={()=>setTheme(k)}>{v}</button>)}</div></div>
       <div className="card"><button className="btn" onClick={()=>signOut(auth)}>Log out</button></div>
       <div className="card"><small>Privacy: your data is stored in your private Firestore area. No photos are uploaded.</small></div></>}
   </main>
